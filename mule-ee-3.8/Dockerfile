@@ -1,55 +1,68 @@
 ###############################################################################
 ## Dockerizing Mule EE
-## Version:  1.0
-## Based on:  java:8-jre (Trusted Java from http://java.com)
+## Version:  2.0
+# Based on example provided by Ken Ng and Nial Darby
+# Updates include:
+#  - From Ubuntu 16:04
+#  - Add current Oracle 8 JDK to image
+#  - Add current ARM Agent 1.7.0
+
+## Update arg values based on version of Mule and Mule ARM Agent version
+## not that you'll need to provide the corresponding zip files for the Docker build
 ###############################################################################
 
-FROM                    java:8-jre
-MAINTAINER              Ken Ng <ken.ng@mulesoft.com>
+FROM                    ubuntu:16.04
+MAINTAINER              Amir Kader <amir@mulesoft.com>
 
 ###############################################################################
 ## Setting up the arguments
-ARG     muleVersion=3.8.1
-ARG     muleDistribution=mule-ee-distribution-standalone-$muleVersion.tar.gz
-ARG     muleHome=/opt/mule-enterprise-standalone-$muleVersion
+## Update arg values based on version of Mule and Mule ARM Agent version
+## not that you'll need to provide the corresponding zip files for the Docker build
+
+ARG muleVersion=3.8.4
+ARG muleAgentVersion=1.7.0
+ARG muleHome=/opt/mule/mule-enterprise-standalone-${muleVersion}
+ARG muleDistribution=mule-ee-distribution-standalone-${muleVersion}.zip
 
 ###############################################################################
 ## Base container configurations
 
-# Configure instance timezone
-RUN     echo 'Asia/Singapore' > /etc/timezone && dpkg-reconfigure tzdata
-
-# Install base pre-requisites
-RUN     apt-get update
-RUN     apt-get upgrade --yes --force-yes
-RUN     apt-get install --yes --force-yes apt-utils
-RUN     apt-get install --yes --force-yes curl
-RUN     apt-get install --yes --force-yes jq
+RUN apt-get update \
+	&& apt-get upgrade -y \
+	&& apt-get install -y  apt-utils \
+	&& apt-get install -y software-properties-common \
+	&& add-apt-repository ppa:webupd8team/java -y \
+	&& apt-get update \
+	&& echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections \
+	&& apt-get install -y oracle-java8-installer \
+	&& apt-get install -y zip unzip \
+	&& apt-get install -y curl \
+	&& apt-get install -y jq \
+	&& apt-get clean \
 
 ###############################################################################
 ## MuleEE installation:
 
 ## Install Mule EE
-WORKDIR /opt/
-COPY    ./$muleDistribution /opt/
-RUN     echo "3a49a52f360e5a7e139a654ed698a029 /opt/$muleDistribution" | md5sum -c
-RUN     tar -xzvf /opt/$muleDistribution
-RUN     ls
-RUN     ln -s $muleHome/ mule
-RUN     ls -l mule
-RUN     rm -f $muleDistribution
+WORKDIR /opt/mule
+COPY ./agent-setup-${muleAgentVersion}.zip /opt/mule/
+COPY ./${muleDistribution} /opt/mule/
+RUN ls -al \
+	&& cd /opt/mule/ \
+	&& unzip ${muleDistribution} \
+	&& ls -al \
+	&& unzip -o agent-setup-${muleAgentVersion}.zip -d ${muleHome}/bin \
+	&& rm ${muleDistribution} \
+	&& rm agent-setup-${muleAgentVersion}.zip
+ADD ./startMule.sh ${muleHome}/bin/
+RUN chmod 755 ${muleHome}/bin/startMule.sh
 
 ## [OPTIONAL] Copy the Datamapper plugin
 # ADD     ./data-mapper-plugin-$muleVersion.zip /opt/mule/plugins/
 
 ## Copy the License file - pre-package into docker image to avoid leakage
-# ADD     ./mule-ee-license.lic /opt/mule/conf/
-# RUN     /opt/mule/bin/mule -installLicense /opt/mule/conf/mule-ee-license.lic
-# RUN     rm -f /opt/mule/conf/mule-ee-license.lic
-
-## Copy the mule start/stop script
-ADD     ./startMule.sh /opt/mule/bin/
-RUN     chmod 755 /opt/mule/bin/startMule.sh
+#COPY ./license.lic /opt/mule/
+#RUN /${muleHome}/bin/mule -installLicense /opt/mule/license.lic
 
 ###############################################################################
 ## Configure mule runtime access pre-requisites
@@ -79,6 +92,9 @@ EXPOSE 8091
 ###############################################################################
 
 ## Environment and execution:
-ENV             MULE_BASE /opt/mule
-WORKDIR         /opt/mule/bin
-ENTRYPOINT      ["/opt/mule/bin/startMule.sh"]
+ENV MULE_BASE /opt/mule/mule-enterprise-standalone-${muleVersion}
+WORKDIR  ${MULE_BASE}/bin
+
+#In order to access environment variables and arguments passed from the startDockerContainer script to the startMule.sh
+#the ENTRYPOINT needed to be updated
+ENTRYPOINT ["/bin/bash", "-c",  "$MULE_BASE/bin/startMule.sh ${*}", "--" ]
